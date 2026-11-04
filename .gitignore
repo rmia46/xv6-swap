@@ -1,0 +1,39 @@
+# Build artifacts & compiled binaries
+*.o
+*.d
+*.asm
+*.sym
+*.out
+*.hex
+_dump
+.gdbinit
+
+# xv6 generated kernel and user binaries
+src/kernel/kernel
+src/user/_*
+src/fs.img
+src/xv6.img
+src/kernel.img
+src/swap.img
+*.img
+
+# Temporary and editor files
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Benchmark raw dumps and ephemeral traces
+benchmarks/raw/*.trace
+benchmarks/raw/*.dump
+scripts/tmp/
+
+# Core dumps and logs
+core
+*.log
+vgcore.*
