@@ -246,14 +246,9 @@ devintr()
     // timer interrupt.
     clockintr();
 #if CURRENT_SWAP_POLICY == SWAP_POLICY_TIMER_AGING
-    static int timer_age_epoch[NCPU];
-    int id = cpuid();
-    if (++timer_age_epoch[id] >= 2) {
-      timer_age_epoch[id] = 0;
-      struct proc *p = myproc();
-      if (p != 0) {
-        swap_timer_age_tick(p);
-      }
+    struct proc *p = myproc();
+    if (p != 0) {
+      swap_timer_age_tick(p);
     }
 #endif
     return 2;

@@ -1,6 +1,6 @@
 # Page Replacement Subsystem Benchmark Summary
 
-Generated on: 2026-11-07 10:12:57 UTC  
+Generated on: 2026-11-07 10:39:48 UTC  
 Configuration: 3 trials per workload, reporting median values.  
 Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.  
 
@@ -15,7 +15,7 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 160 / 160 | 160 | 160 | 0 | 160 | 0.0% | 1763 | 15 | 4283212789 |
 | **FREQ_AGING** | 160 / 160 | 160 | 160 | 0 | 160 | 0.0% | 2560 | 19 | 5444479992 |
 | **DYNAMIC_BIAS** | 160 / 160 | 160 | 160 | 0 | 160 | 0.0% | 2560 | 19 | 5331612141 |
-| **TIMER_AGING** | 160 / 160 | 160 | 160 | 0 | 160 | 0.0% | 2560 | 23 | 6453584218 |
+| **TIMER_AGING** | 160 / 160 | 160 | 160 | 0 | 160 | 0.0% | 2560 | 15 | 4255703579 |
 
 ### Workload: `locality`
 
@@ -28,7 +28,7 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 104 / 104 | 104 | 104 | 44 | 60 | 42.3% | 821 | 12 | 3415551923 |
 | **FREQ_AGING** | 103 / 103 | 103 | 103 | 42 | 61 | 40.8% | 1648 | 11 | 3322929885 |
 | **DYNAMIC_BIAS** | 107 / 107 | 107 | 107 | 49 | 58 | 45.8% | 1712 | 13 | 3690677697 |
-| **TIMER_AGING** | 98 / 98 | 98 | 98 | 51 | 48 | 51.5% | 1568 | 13 | 3486446412 |
+| **TIMER_AGING** | 103 / 103 | 103 | 103 | 42 | 61 | 40.8% | 1648 | 10 | 2655901435 |
 
 ### Workload: `matrix`
 
@@ -41,7 +41,7 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 11 / 11 | 11 | 11 | 0 | 11 | 0.0% | 109 | 1 | 337505317 |
 | **FREQ_AGING** | 12 / 12 | 12 | 12 | 0 | 12 | 0.0% | 192 | 1 | 315787200 |
 | **DYNAMIC_BIAS** | 12 / 12 | 12 | 12 | 0 | 12 | 0.0% | 192 | 2 | 359276581 |
-| **TIMER_AGING** | 12 / 12 | 12 | 12 | 0 | 12 | 0.0% | 192 | 2 | 489829732 |
+| **TIMER_AGING** | 12 / 12 | 12 | 12 | 0 | 12 | 0.0% | 192 | 1 | 260043825 |
 
 ### Workload: `dirty_stress`
 
@@ -54,7 +54,7 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 139 / 139 | 139 | 139 | 93 | 46 | 66.9% | 1056 | 14 | 4040904957 |
 | **FREQ_AGING** | 143 / 143 | 143 | 143 | 87 | 56 | 60.8% | 2288 | 17 | 4714913288 |
 | **DYNAMIC_BIAS** | 140 / 140 | 140 | 140 | 90 | 50 | 64.3% | 2240 | 16 | 4361608839 |
-| **TIMER_AGING** | 123 / 123 | 123 | 123 | 84 | 39 | 68.3% | 1968 | 13 | 3659422735 |
+| **TIMER_AGING** | 143 / 143 | 143 | 143 | 87 | 56 | 60.8% | 2288 | 12 | 3160156593 |
 
 ### Workload: `phase_change`
 
@@ -67,7 +67,7 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 53 / 53 | 53 | 53 | 0 | 53 | 0.0% | 586 | 6 | 1686674825 |
 | **FREQ_AGING** | 56 / 56 | 56 | 56 | 0 | 56 | 0.0% | 896 | 8 | 2080824813 |
 | **DYNAMIC_BIAS** | 56 / 56 | 56 | 56 | 0 | 56 | 0.0% | 896 | 6 | 1673847137 |
-| **TIMER_AGING** | 56 / 56 | 56 | 56 | 0 | 56 | 0.0% | 896 | 6 | 1959058494 |
+| **TIMER_AGING** | 56 / 56 | 56 | 56 | 0 | 56 | 0.0% | 896 | 4 | 1281978732 |
 
 ### Total Subsystem Traffic & Overhead Across All Workloads
 
@@ -80,5 +80,5 @@ Hardware Invariants: `MAX_PHY_PAGES = 16`, `NUM_PAGES = 32`.
 | **CAR_2Q** | 467 | 467 | 467 | **934** | 137 | 4335 |
 | **FREQ_AGING** | 474 | 474 | 474 | **948** | 129 | 7584 |
 | **DYNAMIC_BIAS** | 475 | 475 | 475 | **950** | 139 | 7600 |
-| **TIMER_AGING** | 449 | 449 | 449 | **898** | 135 | 7184 |
+| **TIMER_AGING** | 474 | 474 | 474 | **948** | 129 | 7584 |
 

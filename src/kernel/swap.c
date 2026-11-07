@@ -249,6 +249,7 @@ static uint64 select_victim_page(struct proc *p) {
 
   uint32 min_score = 0xFFFFFFFF;
   int victim_idx = -1;
+  int sfence_needed = 0;
 
   for (int i = 0; i < p->resident_count; i++) {
     int idx = (p->clock_hand + i) % p->resident_count;
@@ -265,15 +266,23 @@ static uint64 select_victim_page(struct proc *p) {
     }
 
     uint8 accessed = (*pte & PTE_A) ? 1 : 0;
-    uint8 effective_hist = p->access_history[idx] | (accessed << 7);
-    uint32 score = (uint32)effective_hist + ((*pte & PTE_D) ? 32 : 0);
+    p->access_history[idx] = (p->access_history[idx] >> 1) | (accessed << 7);
+    if (accessed) {
+      *pte &= ~PTE_A;
+      sfence_needed = 1;
+    }
 
+    uint32 score = (uint32)p->access_history[idx] + ((*pte & PTE_D) ? 32 : 0);
     if (score < min_score) {
       min_score = score;
       victim_idx = idx;
       if (score == 0)
         break;
     }
+  }
+
+  if (sfence_needed) {
+    sfence_vma();
   }
 
   if (victim_idx < 0)
