@@ -15,7 +15,7 @@
 ---
 
 ## 2. Experimental Configuration
-- **Architecture:** x86 (QEMU)
+- **Architecture:** RISC-V 64-bit Sv39 (QEMU `qemu-system-riscv64`)
 - **Physical Memory Limit (RAM):** e.g., 2MB / 4MB / 512 frames
 - **Swap Space Allocation:** e.g., 1024 disk blocks
 - **Workload Parameters:** (e.g., iterations, working set size in pages)

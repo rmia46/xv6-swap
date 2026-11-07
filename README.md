@@ -1,6 +1,6 @@
 # CSE323 — Project P4: Page Replacement with Swap
 
-Operating Systems university research and development project extending MIT xv6 (targeted for xv6 x86, pending official starter confirmation) with demand paging / swapping mechanisms and evaluating comparative page replacement algorithms.
+Operating Systems university research and development project extending MIT xv6 (targeting xv6-RISC-V 64-bit) with demand paging / swapping mechanisms and evaluating comparative page replacement algorithms.
 
 ---
 
@@ -25,11 +25,11 @@ This project addresses two decoupled concerns:
 
 ---
 
-## 2. Target Environment (Provisional)
+## 2. Target Environment
 
-- **OS Target:** xv6 (x86 architecture target provisional update; pending starter kit confirmation)
-- **Virtual Machine:** QEMU (x86 / `qemu-system-i386`)
-- **Toolchain:** GCC / Clang with cross-compilation support for 32-bit x86 ELF
+- **OS Target:** xv6-RISC-V (64-bit Sv39 paging)
+- **Virtual Machine:** QEMU (`qemu-system-riscv64`)
+- **Toolchain:** `riscv64-unknown-elf-gcc` or `riscv64-linux-gnu-gcc`
 - **Build System:** GNU Make
 
 ---
@@ -91,8 +91,8 @@ This project addresses two decoupled concerns:
 Typical expected workflow for xv6:
 
 ```bash
-# Ensure 32-bit development libraries and QEMU are installed (Debian/Ubuntu)
-sudo apt-get install build-essential gcc-multilib qemu-system-x86
+# Ensure RISC-V toolchain and QEMU are installed (Debian/Ubuntu)
+sudo apt-get install build-essential gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-system-misc
 
 # Build kernel and user utilities
 cd src && make

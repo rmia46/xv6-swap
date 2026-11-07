@@ -94,7 +94,7 @@ We enforce [Conventional Commits](https://www.conventionalcommits.org/) to maint
   - Never hold spinlocks across I/O sleep (e.g., disk read/write).
   - Document all lock acquisition orders to prevent deadlocks.
 - **Page Table Discipline**:
-  - Always invalidate TLB when modifying present/valid or permission bits (`lcr3` on x86 or `sfence.vma` on RISC-V).
+  - Always invalidate TLB when modifying valid or permission bits using `sfence.vma` instruction on RISC-V.
 
 ---
 
