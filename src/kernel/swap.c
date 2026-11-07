@@ -113,7 +113,58 @@ void swap_stats_reset(void) {
 // Eviction policy: Select victim resident page from process p.
 // Returns victim virtual address on success, or 0 on failure.
 static uint64 select_victim_page(struct proc *p) {
-#if CURRENT_SWAP_POLICY == SWAP_POLICY_CAR_2Q
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_FREQ_AGING
+  if (p->resident_count <= 0)
+    return 0;
+
+  uint32 min_score = 0xFFFFFFFF;
+  int victim_idx = -1;
+
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (p->clock_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      // Unmapped or invalid entry; select immediately
+      victim_idx = idx;
+      break;
+    }
+
+    if (*pte & PTE_A) {
+      if (p->ref_frequency[idx] < 15) {
+        p->ref_frequency[idx]++;
+      }
+      p->access_history[idx] = (p->access_history[idx] >> 1) | 0x80;
+      *pte &= ~PTE_A;
+      sfence_vma();
+    } else {
+      p->ref_frequency[idx] = (p->ref_frequency[idx] * 3) / 4;
+      p->access_history[idx] = (p->access_history[idx] >> 1);
+    }
+
+    uint32 score = (uint32)p->access_history[idx] +
+                   ((uint32)p->ref_frequency[idx] * 16) +
+                   ((*pte & PTE_D) ? 32 : 0);
+    if (score < min_score) {
+      min_score = score;
+      victim_idx = idx;
+    }
+  }
+
+  if (victim_idx < 0)
+    victim_idx = p->clock_hand % p->resident_count;
+
+  uint64 victim_va = p->resident_pages[victim_idx];
+  p->clock_hand = (victim_idx + 1) % p->resident_count;
+  fifo_remove(p, victim_va);
+  return victim_va;
+
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_CAR_2Q
   if (p->resident_count <= 0)
     return 0;
 
