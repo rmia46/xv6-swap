@@ -86,10 +86,12 @@ static uint32 compute_dynamic_bias(void) {
 #endif
 
 void swap_record_fault(void) {
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
   uint cur_tick;
   acquire(&tickslock);
   cur_tick = ticks;
   release(&tickslock);
+#endif
 
   acquire(&swap_stats_lock);
   swap_stats.fault_total++;
@@ -201,10 +203,97 @@ void swap_stats_reset(void) {
   release(&swap_stats_lock);
 }
 
+// Background aging engine: periodic decay driven by timer interrupts.
+// Concurrency safe: no spinlocks or sleeplocks acquired, does not sleep.
+void swap_timer_age_tick(struct proc *p) {
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_TIMER_AGING
+  if (p == 0 || p->state != RUNNING || p->pagetable == 0 || p->resident_count <= 0 || p->killed)
+    return;
+
+  int count = p->resident_count;
+  if (count > MAX_PHY_PAGES)
+    count = MAX_PHY_PAGES;
+
+  int cleared_any = 0;
+  for (int i = 0; i < count; i++) {
+    uint64 va = p->resident_pages[i];
+    if (va == 0 || va >= MAXVA)
+      continue;
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V) || !(*pte & PTE_U))
+      continue;
+
+    uint8 accessed = (*pte & PTE_A) ? 1 : 0;
+    p->access_history[i] = (p->access_history[i] >> 1) | (accessed << 7);
+    if (accessed) {
+      *pte &= ~PTE_A;
+      cleared_any = 1;
+    }
+  }
+
+  if (cleared_any) {
+    sfence_vma();
+  }
+#else
+  (void)p;
+#endif
+}
+
 // Eviction policy: Select victim resident page from process p.
 // Returns victim virtual address on success, or 0 on failure.
 static uint64 select_victim_page(struct proc *p) {
-#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_TIMER_AGING
+  if (p->resident_count <= 0)
+    return 0;
+
+  uint32 min_score = 0xFFFFFFFF;
+  int victim_idx = -1;
+  int sfence_needed = 0;
+
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (p->clock_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      victim_idx = idx;
+      break;
+    }
+
+    uint8 accessed = (*pte & PTE_A) ? 1 : 0;
+    p->access_history[idx] = (p->access_history[idx] >> 1) | (accessed << 7);
+    if (accessed) {
+      *pte &= ~PTE_A;
+      sfence_needed = 1;
+    }
+
+    uint32 score = (uint32)p->access_history[idx] + ((*pte & PTE_D) ? 32 : 0);
+    if (score < min_score) {
+      min_score = score;
+      victim_idx = idx;
+      if (score == 0)
+        break;
+    }
+  }
+
+  if (sfence_needed) {
+    sfence_vma();
+  }
+
+  if (victim_idx < 0)
+    victim_idx = p->clock_hand % p->resident_count;
+
+  uint64 victim_va = p->resident_pages[victim_idx];
+  p->clock_hand = (victim_idx + 1) % p->resident_count;
+  fifo_remove(p, victim_va);
+  return victim_va;
+
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
   if (p->resident_count <= 0)
     return 0;
 

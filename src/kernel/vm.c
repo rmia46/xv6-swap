@@ -514,7 +514,7 @@ fifo_enqueue(struct proc *p, uint64 va)
 #if CURRENT_SWAP_POLICY == SWAP_POLICY_FREQ_AGING
     p->access_history[tail] = 0x80;
     p->ref_frequency[tail] = 1;
-#elif CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK || CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK || CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS || CURRENT_SWAP_POLICY == SWAP_POLICY_TIMER_AGING
     p->access_history[tail] = 0x80;
     p->ref_frequency[tail] = 0;
 #else

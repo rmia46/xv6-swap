@@ -181,6 +181,7 @@ void            swap_free(int);
 int             swap_write(int, char *);
 int             swap_read(int, char *);
 int             swap_evict_page(struct proc *);
+void            swap_timer_age_tick(struct proc *);
 
 // plic.c
 void            plicinit(void);

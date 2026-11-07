@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "swap.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -244,6 +245,12 @@ devintr()
   } else if (scause == 0x8000000000000005L) {
     // timer interrupt.
     clockintr();
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_TIMER_AGING
+    struct proc *p = myproc();
+    if (p != 0) {
+      swap_timer_age_tick(p);
+    }
+#endif
     return 2;
   } else {
     return 0;
