@@ -110,26 +110,83 @@ void swap_stats_reset(void) {
   release(&swap_stats_lock);
 }
 
-// FIFO replacement policy: Evict the oldest resident page from process p.
-// Preconditions: called when p->fifo_count >= MAX_PHY_PAGES.
-// Returns 0 on success, -1 on failure.
-int swap_evict_page(struct proc *p) {
-  if (p->fifo_count <= 0)
-    return -1;
+// Eviction policy: Select victim resident page from process p.
+// Returns victim virtual address on success, or 0 on failure.
+static uint64 select_victim_page(struct proc *p) {
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_CLOCK
+  if (p->resident_count <= 0)
+    return 0;
+
+  int original_hand = p->clock_hand;
+  int attempts = 0;
+  // Maximum 2 full loops across all resident pages: in loop 1, Accessed bits get cleared.
+  // In loop 2, at least one page with PTE_A==0 is guaranteed to be chosen.
+  int max_attempts = 2 * p->resident_count + 1;
+
+  while (attempts < max_attempts) {
+    int idx = p->clock_hand;
+    uint64 va = p->resident_pages[idx];
+
+    // Advance clock hand to next resident page
+    p->clock_hand = (p->clock_hand + 1) % p->resident_count;
+    attempts++;
+
+    // Count inspection
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      // Unmapped or invalid entry; evict it
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (*pte & PTE_A) {
+      // Second chance: clear Accessed bit and flush TLB so MMU will set it again on access
+      *pte &= ~PTE_A;
+      sfence_vma();
+    } else {
+      // Found candidate with Accessed == 0
+      fifo_remove(p, va);
+      return va;
+    }
+  }
+
+  // Fallback: evict at original_hand
+  int fallback_idx = original_hand % p->resident_count;
+  uint64 va = p->resident_pages[fallback_idx];
+  fifo_remove(p, va);
+  return va;
+
+#else // SWAP_POLICY_FIFO
+  if (p->resident_count <= 0)
+    return 0;
 
   // Scan inspection count
   acquire(&swap_stats_lock);
   swap_stats.scan_inspections++;
   release(&swap_stats_lock);
 
-  // Dequeue the oldest page from FIFO
-  uint64 va = p->fifo_pages[p->fifo_head];
-  p->fifo_head = (p->fifo_head + 1) % MAX_PHY_PAGES;
-  p->fifo_count--;
+  // Dequeue oldest page
+  uint64 va = p->resident_pages[p->clock_hand];
+  fifo_remove(p, va);
+  return va;
+#endif
+}
+
+// Replacement policy: Evict one resident page from process p.
+// Preconditions: called when p->resident_count >= MAX_PHY_PAGES.
+// Returns 0 on success, -1 on failure.
+int swap_evict_page(struct proc *p) {
+  uint64 va = select_victim_page(p);
+  if (va == 0)
+    return -1;
 
   pte_t *pte = walk(p->pagetable, va, 0);
   if (pte == 0 || !(*pte & PTE_V)) {
-    // Page was somehow unmapped or invalid; continue eviction
+    // Page was somehow unmapped or invalid
     return -1;
   }
 

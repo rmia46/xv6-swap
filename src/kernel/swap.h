@@ -35,4 +35,16 @@ struct proc;
 // Returns 0 on success, -1 on failure
 int swap_evict_page(struct proc *p);
 
+// Page replacement policy definitions
+#define SWAP_POLICY_FIFO  0
+#define SWAP_POLICY_CLOCK 1
+
+#if defined(POLICY_CLOCK)
+#define CURRENT_SWAP_POLICY SWAP_POLICY_CLOCK
+#elif defined(POLICY_FIFO)
+#define CURRENT_SWAP_POLICY SWAP_POLICY_FIFO
+#else
+#define CURRENT_SWAP_POLICY SWAP_POLICY_CLOCK
+#endif
+
 #endif // _SWAP_H_

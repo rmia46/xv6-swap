@@ -64,7 +64,11 @@ OBJDUMP = $(TOOLPREFIX)objdump
 # Deterministic builds.
 DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
 
-CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
+# Swapping replacement policy: FIFO, CLOCK (default: CLOCK)
+POLICY ?= CLOCK
+CFLAGS += -DPOLICY_$(POLICY)
+
+CFLAGS += -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS += $(DETFLAGS)
 CFLAGS += -march=rv64gc
 CFLAGS += -std=gnu99
