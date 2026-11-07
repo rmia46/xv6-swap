@@ -72,6 +72,37 @@ usertrap(void)
              vmfault(p->pagetable, p->sz, r_stval(),
                      (r_scause() == 13) ? 1 : 0) != 0) {
     // page fault on lazily-allocated page
+  } else if (r_scause() == 2) {
+    // Illegal instruction trap: handle rdtime / rdcycle emulation if trapped in user mode
+    uint32 inst = 0;
+    int handled = 0;
+    if (copyin(p->pagetable, p->sz, (char *)&inst, p->trapframe->epc, sizeof(inst)) == 0) {
+      // CSRRS rd, csr, x0: opcode 0x73, funct3 0x2, rs1 0 -> mask 0x000fffff == 0x00002073
+      if ((inst & 0x000fffff) == 0x00002073) {
+        uint32 csr = (inst >> 20) & 0xfff;
+        int rd = (inst >> 7) & 0x1f;
+        uint64 val = 0;
+        if (csr == 0xc01) { // time
+          val = r_time();
+          handled = 1;
+        } else if (csr == 0xc00) { // cycle
+          val = r_time();
+          handled = 1;
+        }
+        if (handled) {
+          if (rd != 0) {
+            uint64 *regs = (uint64 *)p->trapframe;
+            regs[4 + rd] = val;
+          }
+          p->trapframe->epc += 4;
+        }
+      }
+    }
+    if (!handled) {
+      printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
   } else {
     printk("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printk("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());

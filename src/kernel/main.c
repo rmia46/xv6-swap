@@ -24,6 +24,7 @@ main()
     trapinithart();     // install kernel trap vector
     plicinit();         // set up interrupt controller
     plicinithart();     // ask PLIC for device interrupts
+    w_scounteren(7); // allow user to use cycle, time, instret
     binit();            // buffer cache
     iinit();            // inode table
     fileinit();         // file table
@@ -40,6 +41,7 @@ main()
     kvminithart();  // turn on paging
     trapinithart(); // install kernel trap vector
     plicinithart(); // ask PLIC for device interrupts
+    w_scounteren(7); // allow user to use cycle, time, instret
   }
 
   scheduler();

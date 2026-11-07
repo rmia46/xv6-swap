@@ -4,8 +4,8 @@ Operating Systems university research and development project extending MIT xv6 
 
 ---
 
-> **Current Status:** 🟡 **Phase 0 — Repository Preparation & Starter Audit Phase**  
-> Baseline kernel source has not yet been introduced. The repository is organized and awaiting delivery and auditing of the instructor's starter code.
+> **Current Status:** 🟢 **Phase 4 Operational — All 4 Page Replacement Policies Implemented & Verified**  
+> The virtual memory swapping subsystem, disk backing store, demand-paging fault engine, diagnostic telemetry counters, and four page replacement algorithms are implemented, fully tested, and scientifically benchmarked.
 
 ---
 
@@ -14,14 +14,15 @@ Operating Systems university research and development project extending MIT xv6 
 Memory management is fundamental to operating system design. When physical memory capacity is exceeded, an operating system must evict resident pages to secondary storage (swap) to make room for active processes.
 
 This project addresses two decoupled concerns:
-1. **Swapping Mechanism:** The low-level machinery responsible for backing up physical page frames to disk, invalidating page table entries (PTEs), intercepting page faults, and restoring page contents on demand.
-2. **Page Replacement Policy:** The decision algorithm determining *which* resident physical frame to evict when memory is exhausted.
+1. **Swapping Mechanism:** The low-level machinery responsible for backing up physical page frames to disk, invalidating page table entries (PTEs) using the supervisor software bit `PTE_S`, intercepting page faults in `vmfault()`, enforcing TLB invalidation (`sfence_vma()`), and restoring page contents on demand.
+2. **Page Replacement Policy:** The decision algorithm determining *which* resident physical frame to evict when the per-process resident limit (`MAX_PHY_PAGES = 16`) is reached.
 
-### Candidate Replacement Policies
-- **Baseline:** FIFO (First-In, First-Out)
-- **Clock:** Standard Second-Chance Clock using hardware Accessed (`A`) bits
-- **Enhanced Clock:** Multi-class classification using Accessed (`A`) and Dirty (`D`) bits: `(0,0)`, `(0,1)`, `(1,0)`, `(1,1)`
-- **Adaptive / Research Candidate:** Adaptive Clock or dynamic decay algorithm (subject to experimentation and AI exploration)
+### Implemented Replacement Policies
+All four target page replacement algorithms are fully implemented, verified, and operational:
+- **Baseline 0 — FIFO (First-In, First-Out):** Queue-based eviction selecting the oldest resident page frame. Serves as the control baseline.
+- **Baseline 1 — Clock (Second-Chance):** Circular sweep inspecting the hardware Accessed (`PTE_A`) bit, giving referenced pages a second chance and clearing the bit.
+- **Baseline 2 — Enhanced Clock (Accessed + Dirty):** Multi-pass search categorizing resident pages into 4 classes: `(0,0)`, `(0,1)`, `(1,0)`, `(1,1)` to prioritize clean page evictions and eliminate unnecessary disk writes.
+- **Research Candidate — Adaptive Aging Clock:** Pseudo-LRU 8-bit decaying shift register access history combined with a dirty write-back penalty bias, executing deterministic $O(N)$ sweeps per eviction.
 
 ---
 
@@ -83,22 +84,44 @@ This project addresses two decoupled concerns:
 
 ---
 
-## 4. Setup & Building (Pending Confirmation)
+## 4. Setup, Building & Running
 
-> [!NOTE]
-> The build instructions below will be finalized as soon as the official starter code is added to `src/`.
+Ensure RISC-V toolchain and QEMU are installed (Debian/Ubuntu):
+```bash
+sudo apt-get install build-essential gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-system-misc
+```
 
-Typical expected workflow for xv6:
+### Compiling with a Specific Replacement Policy
+The replacement policy is selected at compile-time via the `POLICY` variable:
 
 ```bash
-# Ensure RISC-V toolchain and QEMU are installed (Debian/Ubuntu)
-sudo apt-get install build-essential gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-system-misc
+cd src
 
-# Build kernel and user utilities
-cd src && make
+# 1. First-In, First-Out (Baseline 0)
+make clean && make POLICY=FIFO
 
-# Run in QEMU
+# 2. Second-Chance Clock (Baseline 1)
+make clean && make POLICY=CLOCK
+
+# 3. Enhanced Clock (Baseline 2: Accessed + Dirty)
+make clean && make POLICY=ENHANCED_CLOCK
+
+# 4. Adaptive Aging Clock (Research Candidate)
+make clean && make POLICY=ADAPTIVE_CLOCK
+```
+
+### Running and Testing in QEMU
+```bash
+# Launch xv6 in QEMU
 make qemu
+
+# Inside xv6 shell, run comprehensive swapping test suite:
+$ testswap
+```
+
+To run non-interactive verification:
+```bash
+python3 test-xv6.py testswap
 ```
 
 ---
@@ -111,8 +134,11 @@ make qemu
 
 ---
 
-## 6. Key References
+## 6. Key References & Verification Evidence
 
+- [Architecture Specification: Virtual Memory & Page Swapping Subsystem](file:///data/rspace/codespace/projects/xv6-swap/docs/architecture/README.md)
+- [ADR-002: Modular Swap Architecture, Resident Limits, and Eviction Policies](file:///data/rspace/codespace/projects/xv6-swap/docs/decisions/ADR-002-swap-architecture-and-policies.md)
 - [Detailed Implementation and Research Plan](file:///data/rspace/codespace/projects/xv6-swap/docs/CSE323_P4_Detailed_Plan.md)
-- [Starter Code Audit Checklist](file:///data/rspace/codespace/projects/xv6-swap/docs/starter-audit-template.md)
-- [Architecture Decision Records](file:///data/rspace/codespace/projects/xv6-swap/docs/decisions/README.md)
+- [Empirical Experiment EXP-001: FIFO vs Clock](file:///data/rspace/codespace/projects/xv6-swap/experiments/results/EXP-001-fifo-vs-clock.md)
+- [Empirical Experiment EXP-002: Enhanced Clock (Clean vs Dirty)](file:///data/rspace/codespace/projects/xv6-swap/experiments/results/EXP-002-enhanced-clock.md)
+- [Empirical Experiment EXP-003: Adaptive Aging Clock](file:///data/rspace/codespace/projects/xv6-swap/experiments/results/EXP-003-adaptive-clock.md)
