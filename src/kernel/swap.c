@@ -113,7 +113,164 @@ void swap_stats_reset(void) {
 // Eviction policy: Select victim resident page from process p.
 // Returns victim virtual address on success, or 0 on failure.
 static uint64 select_victim_page(struct proc *p) {
-#if CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_CAR_2Q
+  if (p->resident_count <= 0)
+    return 0;
+
+  #define CAR_T2_TARGET 12
+
+  int t2_count = 0;
+  for (int i = 0; i < p->resident_count; i++) {
+    if (p->is_protected[i])
+      t2_count++;
+  }
+  int t1_count = p->resident_count - t2_count;
+
+  int victim_idx = -1;
+  int fallback_dirty_idx = -1;
+
+  // Step 1: If T1 is not empty and T2 has not exceeded target capacity limit, sweep T1
+  if (t1_count > 0 && t2_count < CAR_T2_TARGET) {
+    int attempts = 0;
+    int max_attempts = 2 * p->resident_count + 1;
+
+    while (attempts < max_attempts && victim_idx < 0) {
+      int idx = p->clock_hand;
+      p->clock_hand = (p->clock_hand + 1) % p->resident_count;
+      attempts++;
+
+      // Skip pages in T2
+      if (p->is_protected[idx])
+        continue;
+
+      acquire(&swap_stats_lock);
+      swap_stats.scan_inspections++;
+      release(&swap_stats_lock);
+
+      uint64 va = p->resident_pages[idx];
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if (pte == 0 || !(*pte & PTE_V)) {
+        victim_idx = idx;
+        break;
+      }
+
+      if (*pte & PTE_A) {
+        // Accessed: clear hardware bit
+        *pte &= ~PTE_A;
+        sfence_vma();
+
+        // Dirty pages are expensive to write out: promote to T2 to avoid swap writes.
+        // Clean pages are promoted if re-referenced, otherwise kept in T1 for cheap eviction.
+        int should_promote = 0;
+        if (*pte & PTE_D) {
+          should_promote = 1;
+        } else {
+          p->access_history[idx]++;
+          if (p->access_history[idx] >= 2)
+            should_promote = 1;
+        }
+
+        if (should_promote) {
+          p->is_protected[idx] = 1;
+          p->access_history[idx] = 0;
+          t2_count++;
+          t1_count--;
+
+          // If T2 reached target capacity or T1 is empty, switch to T2 sweep
+          if (t2_count >= CAR_T2_TARGET || t1_count == 0)
+            break;
+        }
+        continue;
+      }
+
+      // PTE_A == 0: Candidate victim in T1. Prefer clean pages.
+      if (!(*pte & PTE_D)) {
+        victim_idx = idx;
+        break;
+      } else {
+        if (fallback_dirty_idx < 0)
+          fallback_dirty_idx = idx;
+      }
+
+      if (attempts >= p->resident_count && fallback_dirty_idx >= 0) {
+        victim_idx = fallback_dirty_idx;
+        break;
+      }
+    }
+
+    if (victim_idx < 0 && fallback_dirty_idx >= 0) {
+      victim_idx = fallback_dirty_idx;
+    }
+  }
+
+  // Step 2: If no victim found in T1 (or T1 is empty, or T2 exceeded target capacity), sweep T2
+  if (victim_idx < 0) {
+    int fallback_dirty_t2 = -1;
+    int attempts = 0;
+    int max_attempts = 2 * p->resident_count + 1;
+
+    while (attempts < max_attempts && victim_idx < 0) {
+      int idx = p->clock_hand;
+      p->clock_hand = (p->clock_hand + 1) % p->resident_count;
+      attempts++;
+
+      // Skip pages in T1
+      if (!p->is_protected[idx])
+        continue;
+
+      acquire(&swap_stats_lock);
+      swap_stats.scan_inspections++;
+      release(&swap_stats_lock);
+
+      uint64 va = p->resident_pages[idx];
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if (pte == 0 || !(*pte & PTE_V)) {
+        victim_idx = idx;
+        break;
+      }
+
+      if (*pte & PTE_A) {
+        // Second chance in T2
+        *pte &= ~PTE_A;
+        sfence_vma();
+      } else {
+        // PTE_A == 0: Candidate for demotion to T1 or eviction from T2
+        // Demote to T1 so a truly cold/clean page in T1 can be chosen as victim
+        p->is_protected[idx] = 0;
+        t2_count--;
+        t1_count++;
+
+        if (!(*pte & PTE_D)) {
+          victim_idx = idx;
+          break;
+        } else {
+          if (fallback_dirty_t2 < 0)
+            fallback_dirty_t2 = idx;
+        }
+      }
+
+      if (attempts >= p->resident_count && fallback_dirty_t2 >= 0) {
+        victim_idx = fallback_dirty_t2;
+        break;
+      }
+    }
+
+    if (victim_idx < 0 && fallback_dirty_t2 >= 0) {
+      victim_idx = fallback_dirty_t2;
+    }
+  }
+
+  // Step 3: Absolute fallback
+  if (victim_idx < 0) {
+    victim_idx = p->clock_hand % p->resident_count;
+  }
+
+  uint64 victim_va = p->resident_pages[victim_idx];
+  p->clock_hand = victim_idx % (p->resident_count > 1 ? (p->resident_count - 1) : 1);
+  fifo_remove(p, victim_va);
+  return victim_va;
+
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK
   if (p->resident_count <= 0)
     return 0;
 

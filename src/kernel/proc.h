@@ -100,7 +100,8 @@ struct proc {
   struct context context;      // swtch() here to run process
   // Resident user virtual pages for replacement policy
   uint64 resident_pages[MAX_PHY_PAGES];
-  uint8 access_history[MAX_PHY_PAGES]; // Reference history shift registers
+  uint8 access_history[MAX_PHY_PAGES]; // Reference history shift registers / probationary status
+  uint8 is_protected[MAX_PHY_PAGES];   // 0 = Probationary T1, 1 = Protected T2
   int clock_hand;     // Clock hand / FIFO head index
   int resident_count; // Number of resident physical pages
 

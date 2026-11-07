@@ -140,6 +140,7 @@ kexec(char *path, char **argv)
   for (int j = 0; j < MAX_PHY_PAGES; j++) {
     p->fifo_pages[j] = 0;
     p->access_history[j] = 0;
+    p->is_protected[j] = 0;
   }
   proc_freepagetable(oldpagetable, oldsz);
 
