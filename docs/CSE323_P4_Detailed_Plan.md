@@ -633,29 +633,60 @@ than the measurement method supports.
 
 Separate fault types and count events at well-defined points.
 
+### 7.1 Primary Metric Definitions & Hardware Invariants
+
+To avoid emulation artifacts (where host CPU throttling and hypervisor scheduling cause wall-clock jitter), metrics are categorized into **Hardware/Algorithmic Invariant Counters** and **Emulation-Aware Execution Timers**:
+
+#### A. Deterministic Kernel Counters (Primary Ground Truth)
+
   Metric                   Definition / purpose
   ------------------------ ----------------------------------------------------
-  Total user page faults   All relevant user-mode page faults
-  Swap-in faults           Faults that successfully restore swapped-out pages
-  Lazy-allocation faults   Kept separate from swap-in faults
-  Eviction attempts        Requests to find a victim
-  Successful evictions     Pages actually removed from RAM
-  Swap reads               Page-sized reads from swap storage
-  Swap writes              Page-sized writes to swap storage
-  Clean evictions          Evictions that did not require a new swap write
-  Dirty evictions          Evictions that required preservation/write-back
-  Eviction scan length     Number of candidate inspections per eviction
-  Execution time           End-to-end workload duration
+  Total user page faults   All relevant user-mode page faults (`fault_total`)
+  Swap-in faults           Faults that successfully restore swapped-out pages (`fault_swapin`)
+  Lazy-allocation faults   Kept strictly separate from swap-in faults (`fault_lazy`)
+  Eviction attempts        Requests to find a victim (`evict_attempts`)
+  Successful evictions     Pages actually removed from RAM (`evict_success`)
+  Swap reads               Page-sized reads from swap storage (`swap_reads`)
+  Swap writes              Page-sized writes to swap storage (`swap_writes`)
+  Clean evictions          Evictions that did not require a new swap write (`evict_clean`)
+  Dirty evictions          Evictions that required preservation/write-back (`evict_dirty`)
+  Eviction scan length     Number of candidate inspections per eviction (`scan_inspections`)
   Swap-space utilization   Peak and final number of occupied slots
 
-Useful derived metrics:
+#### B. Emulation-Aware Execution Timing & Statistical Rigor
 
--   **Swap writes per eviction** = swap writes / successful evictions.
--   **Clean-eviction ratio** = clean evictions / successful evictions.
--   **Average scan length** = candidate inspections / successful
-    evictions.
--   **Swap I/O volume** = (swap reads + swap writes) × page size, if
-    every operation is one page.
+  Metric                   Definition / purpose
+  ------------------------ ----------------------------------------------------
+  RISC-V CPU Cycles        Read via hardware CSRs (`rdcycle` or `rdtime`) around workload execution
+  Kernel Timer Ticks       xv6 timer interrupts elapsed during workload execution
+  Multi-Trial Aggregation  3–5 repeated trials per workload; report **Median** and **IQR** (Interquartile Range)
+
+### 7.2 Derived Quality Metrics
+
+-   **Swap writes per eviction** = swap writes / successful evictions (measures I/O amplification).
+-   **Clean-eviction ratio** = clean evictions / successful evictions (higher is better).
+-   **Average scan length** = candidate inspections / successful evictions (measures policy search overhead).
+-   **Swap I/O volume** = (swap reads + swap writes) × page size (total disk traffic).
+-   **Hit ratio equivalent** = 1.0 - (swap-in faults / total memory references).
+
+### 7.3 Iterative Baseline-Advancement Rules
+
+1. **Establish Initial Baseline (BASELINE_0):**
+   - Implement known baseline algorithm (FIFO).
+   - Run complete workload battery under fixed RAM & swap limits.
+   - Freeze measured metrics as BASELINE_0.
+2. **Implement Known Reference Policy:**
+   - Implement Clock (Second Chance) and Enhanced Clock (Accessed + Dirty).
+   - Validate correctness (zero panics, zero data corruption, zero frame/swap leaks).
+   - If statistically superior across workloads, advance to new baseline (e.g., BASELINE_1).
+3. **Continuous Algorithmic Improvement:**
+   - Implement research candidates (Adaptive Clock, decay history, dynamic tuning).
+   - For every pass, log the exact AI prompt/response in `ai-logs/` and save the experiment record in `experiments/results/`.
+4. **Baseline Advancement Gate:**
+   - If a new implementation demonstrates statistically significant improvements across the workload suite without regressing correctness, it replaces the current baseline as the new target to beat.
+   - If it shows regression or trivial improvement, document why and discard or refine.
+5. **Convergence / Diminishing Returns Stopping Criterion:**
+   - Continue iterative refinement until improvements from further changes are no longer significant (e.g., < 2% reduction in swap I/O or page faults) or hit theoretical working-set limits.
 
 Define counter semantics precisely. For example, a fault that begins
 swap-in but fails should not be counted as a successful swap-in. Decide
@@ -664,13 +695,14 @@ whether retries are counted separately.
 Do not use one ambiguous "page fault" counter to represent both lazy
 allocation and swap-in.
 
-### Instrumentation rules
+### 7.4 Instrumentation rules
 
 -   Counter updates must be concurrency-safe.
 -   Counters should not change the replacement decision.
 -   Keep instrumentation identical across policies.
 -   Validate counters with small hand-checkable tests.
 -   Measure policy scan overhead, not just disk I/O.
+-   Measure hardware cycles/ticks within the guest to avoid host emulation bias.
 -   If the course score tool defines metrics differently, follow its
     definition and document any additional metrics separately.
 
