@@ -26,7 +26,7 @@ SRC_DIR = os.path.join(REPO_ROOT, "src")
 RAW_DIR = os.path.join(REPO_ROOT, "benchmarks", "raw")
 PROCESSED_DIR = os.path.join(REPO_ROOT, "benchmarks", "processed")
 
-POLICIES = ["FIFO", "CLOCK", "ENHANCED_CLOCK", "ADAPTIVE_CLOCK", "CAR_2Q"]
+POLICIES = ["FIFO", "CLOCK", "ENHANCED_CLOCK", "ADAPTIVE_CLOCK", "CAR_2Q", "FREQ_AGING"]
 WORKLOADS = ["sequential", "locality", "matrix", "dirty_stress", "phase_change"]
 NUM_TRIALS = 3
 
