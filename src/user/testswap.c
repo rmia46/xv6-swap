@@ -187,12 +187,88 @@ void test_swap_fork(void) {
   printf("test_swap_fork PASSED!\n");
 }
 
+void test_swap_clean_dirty(void) {
+  printf("\n--- test_swap_clean_dirty: testing dirty vs clean page eviction ---\n");
+
+  int pid = fork();
+  if (pid < 0) {
+    printf("FAILED: fork failed\n");
+    exit(1);
+  }
+
+  if (pid == 0) {
+    // Child runs in a fresh process context with minimal resident pages (code + stack)
+    reset_swap_stats();
+
+    // Allocate 16 pages via sbrklazy so no evictions happen at allocation time
+    char *ptr = sbrklazy(MAX_PHY_PAGES * PGSIZE);
+    if (ptr == SBRK_ERROR) {
+      printf("FAILED: sbrklazy failed\n");
+      exit(1);
+    }
+
+    // Touch all 16 pages to bring them into resident memory:
+    // First 8 pages (0..7): write-touch -> PTE_A=1, PTE_D=1 (Class 3 / dirty)
+    for (int p = 0; p < 8; p++) {
+      ptr[p * PGSIZE] = (char)(p + 10);
+    }
+
+    // Next 8 pages (8..15): read-only touch -> PTE_A=1, PTE_D=0 (Class 2 / clean)
+    volatile char dummy = 0;
+    for (int p = 8; p < MAX_PHY_PAGES; p++) {
+      dummy += ptr[p * PGSIZE];
+    }
+    (void)dummy;
+
+    struct swap_stats st_init;
+    get_swap_stats(&st_init);
+    print_stats("after touching 8 dirty and 8 clean pages", &st_init);
+
+    // Now allocate and touch 8 additional pages to trigger 8 page evictions.
+    // Enhanced Clock should sweep through resident pages, demoting Class 2 (A=1, D=0)
+    // to Class 0 (A=0, D=0), and prefer evicting the clean pages (Class 0) over dirty pages!
+    char *extra = sbrklazy(8 * PGSIZE);
+    if (extra == SBRK_ERROR) {
+      printf("FAILED: sbrklazy extra failed\n");
+      exit(1);
+    }
+
+    for (int p = 0; p < 8; p++) {
+      extra[p * PGSIZE] = (char)(p + 50);
+    }
+
+    struct swap_stats st_after;
+    get_swap_stats(&st_after);
+    print_stats("after allocating extra pages and triggering evictions", &st_after);
+
+    int clean_evicts = (int)(st_after.evict_clean - st_init.evict_clean);
+    int dirty_evicts = (int)(st_after.evict_dirty - st_init.evict_dirty);
+    printf("Clean evictions: %d, Dirty evictions: %d\n", clean_evicts, dirty_evicts);
+
+    if (clean_evicts == 0) {
+      printf("FAILED: expected clean evictions to be preferred\n");
+      exit(1);
+    }
+
+    printf("test_swap_clean_dirty PASSED!\n");
+    exit(0);
+  }
+
+  int status;
+  wait(&status);
+  if (status != 0) {
+    printf("FAILED: test_swap_clean_dirty child exited with error %d\n", status);
+    exit(1);
+  }
+}
+
 int main(int argc, char *argv[]) {
   printf("testswap starting...\n");
 
   test_swap_basic();
   test_swap_lazy();
   test_swap_fork();
+  test_swap_clean_dirty();
 
   printf("\nALL SWAP TESTS PASSED!\n");
   exit(0);

@@ -36,10 +36,13 @@ struct proc;
 int swap_evict_page(struct proc *p);
 
 // Page replacement policy definitions
-#define SWAP_POLICY_FIFO  0
-#define SWAP_POLICY_CLOCK 1
+#define SWAP_POLICY_FIFO           0
+#define SWAP_POLICY_CLOCK          1
+#define SWAP_POLICY_ENHANCED_CLOCK 2
 
-#if defined(POLICY_CLOCK)
+#if defined(POLICY_ENHANCED_CLOCK)
+#define CURRENT_SWAP_POLICY SWAP_POLICY_ENHANCED_CLOCK
+#elif defined(POLICY_CLOCK)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_CLOCK
 #elif defined(POLICY_FIFO)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_FIFO

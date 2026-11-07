@@ -113,7 +113,126 @@ void swap_stats_reset(void) {
 // Eviction policy: Select victim resident page from process p.
 // Returns victim virtual address on success, or 0 on failure.
 static uint64 select_victim_page(struct proc *p) {
-#if CURRENT_SWAP_POLICY == SWAP_POLICY_CLOCK
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_ENHANCED_CLOCK
+  if (p->resident_count <= 0)
+    return 0;
+
+  int original_hand = p->clock_hand;
+
+  // Step 1: Scan for Class 0 (A=0, D=0). Do not modify Accessed bits.
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (original_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (!(*pte & PTE_A) && !(*pte & PTE_D)) {
+      // Found Class 0 victim
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+  }
+
+  // Step 2: Scan for Class 1 (A=0, D=1). For each page with A=1 examined, clear PTE_A and sfence_vma().
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (original_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (!(*pte & PTE_A) && (*pte & PTE_D)) {
+      // Found Class 1 victim
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (*pte & PTE_A) {
+      *pte &= ~PTE_A;
+      sfence_vma();
+    }
+  }
+
+  // Step 3: Repeat Step 1 looking for Class 0 (A=0, D=0).
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (original_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (!(*pte & PTE_A) && !(*pte & PTE_D)) {
+      // Found Class 0 victim
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+  }
+
+  // Step 4: Repeat Step 2 looking for Class 1 (A=0, D=1) (or first candidate).
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (original_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (!(*pte & PTE_A) && (*pte & PTE_D)) {
+      // Found Class 1 victim
+      p->clock_hand = (idx + 1) % p->resident_count;
+      fifo_remove(p, va);
+      return va;
+    }
+
+    if (*pte & PTE_A) {
+      *pte &= ~PTE_A;
+      sfence_vma();
+    }
+  }
+
+  // Fallback: evict at original_hand
+  int fallback_idx = original_hand % p->resident_count;
+  uint64 va = p->resident_pages[fallback_idx];
+  p->clock_hand = (fallback_idx + 1) % p->resident_count;
+  fifo_remove(p, va);
+  return va;
+
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_CLOCK
   if (p->resident_count <= 0)
     return 0;
 
