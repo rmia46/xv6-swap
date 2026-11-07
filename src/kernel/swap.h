@@ -29,6 +29,7 @@ int swap_write(int slot, char *src_pa);
 int swap_read(int slot, char *dst_pa);
 void swap_stats_get(struct swap_stats *dst);
 void swap_stats_reset(void);
+void swap_record_fault(void);
 
 struct proc;
 // Policy hook: evict one resident page for process p
@@ -42,8 +43,11 @@ int swap_evict_page(struct proc *p);
 #define SWAP_POLICY_ADAPTIVE_CLOCK 3
 #define SWAP_POLICY_CAR_2Q         4
 #define SWAP_POLICY_FREQ_AGING     5
+#define SWAP_POLICY_DYNAMIC_BIAS   6
 
-#if defined(POLICY_FREQ_AGING)
+#if defined(POLICY_DYNAMIC_BIAS)
+#define CURRENT_SWAP_POLICY SWAP_POLICY_DYNAMIC_BIAS
+#elif defined(POLICY_FREQ_AGING)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_FREQ_AGING
 #elif defined(POLICY_CAR_2Q)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_CAR_2Q

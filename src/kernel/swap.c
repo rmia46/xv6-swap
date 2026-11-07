@@ -14,6 +14,91 @@
 struct swap_stats swap_stats;
 struct spinlock swap_stats_lock;
 
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+#define FAULT_WINDOW_TICKS 4
+#define BASE_BIAS 24
+#define RATE_FACTOR 4
+#define MIN_BIAS 16
+#define MAX_BIAS 64
+
+static uint32 fault_history[FAULT_WINDOW_TICKS];
+static uint last_window_tick = 0;
+
+static void fault_tracker_reset(void) {
+  memset(fault_history, 0, sizeof(fault_history));
+  last_window_tick = 0;
+}
+
+static void fault_tracker_record(uint cur_tick) {
+  if (cur_tick < last_window_tick) {
+    memset(fault_history, 0, sizeof(fault_history));
+    last_window_tick = cur_tick;
+  } else if (cur_tick > last_window_tick) {
+    uint elapsed = cur_tick - last_window_tick;
+    if (elapsed >= FAULT_WINDOW_TICKS) {
+      memset(fault_history, 0, sizeof(fault_history));
+    } else {
+      for (uint i = 1; i <= elapsed; i++) {
+        fault_history[(last_window_tick + i) % FAULT_WINDOW_TICKS] = 0;
+      }
+    }
+    last_window_tick = cur_tick;
+  }
+  fault_history[cur_tick % FAULT_WINDOW_TICKS]++;
+}
+
+static uint32 compute_dynamic_bias(void) {
+  uint cur_tick;
+  acquire(&tickslock);
+  cur_tick = ticks;
+  release(&tickslock);
+
+  acquire(&swap_stats_lock);
+  if (cur_tick < last_window_tick) {
+    memset(fault_history, 0, sizeof(fault_history));
+    last_window_tick = cur_tick;
+  } else if (cur_tick > last_window_tick) {
+    uint elapsed = cur_tick - last_window_tick;
+    if (elapsed >= FAULT_WINDOW_TICKS) {
+      memset(fault_history, 0, sizeof(fault_history));
+    } else {
+      for (uint i = 1; i <= elapsed; i++) {
+        fault_history[(last_window_tick + i) % FAULT_WINDOW_TICKS] = 0;
+      }
+    }
+    last_window_tick = cur_tick;
+  }
+
+  uint32 total_faults = 0;
+  for (int i = 0; i < FAULT_WINDOW_TICKS; i++) {
+    total_faults += fault_history[i];
+  }
+  release(&swap_stats_lock);
+
+  uint32 dynamic_bias = BASE_BIAS + (total_faults * RATE_FACTOR) / FAULT_WINDOW_TICKS;
+  if (dynamic_bias < MIN_BIAS)
+    dynamic_bias = MIN_BIAS;
+  if (dynamic_bias > MAX_BIAS)
+    dynamic_bias = MAX_BIAS;
+
+  return dynamic_bias;
+}
+#endif
+
+void swap_record_fault(void) {
+  uint cur_tick;
+  acquire(&tickslock);
+  cur_tick = ticks;
+  release(&tickslock);
+
+  acquire(&swap_stats_lock);
+  swap_stats.fault_total++;
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+  fault_tracker_record(cur_tick);
+#endif
+  release(&swap_stats_lock);
+}
+
 // Swap slot allocation bitmap
 // 1 bit per slot: 0 = free, 1 = in use
 static uchar swap_bitmap[NSWAPSLOTS / 8 + 1];
@@ -22,6 +107,9 @@ static struct spinlock swap_lock;
 void swap_init(void) {
   initlock(&swap_lock, "swap");
   initlock(&swap_stats_lock, "swap_stats");
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+  fault_tracker_reset();
+#endif
   memset(swap_bitmap, 0, sizeof(swap_bitmap));
   memset(&swap_stats, 0, sizeof(swap_stats));
 }
@@ -107,13 +195,58 @@ void swap_stats_get(struct swap_stats *dst) {
 void swap_stats_reset(void) {
   acquire(&swap_stats_lock);
   memset(&swap_stats, 0, sizeof(struct swap_stats));
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+  fault_tracker_reset();
+#endif
   release(&swap_stats_lock);
 }
 
 // Eviction policy: Select victim resident page from process p.
 // Returns victim virtual address on success, or 0 on failure.
 static uint64 select_victim_page(struct proc *p) {
-#if CURRENT_SWAP_POLICY == SWAP_POLICY_FREQ_AGING
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
+  if (p->resident_count <= 0)
+    return 0;
+
+  uint32 dynamic_bias = compute_dynamic_bias();
+  uint32 min_score = 0xFFFFFFFF;
+  int victim_idx = -1;
+
+  for (int i = 0; i < p->resident_count; i++) {
+    int idx = (p->clock_hand + i) % p->resident_count;
+    uint64 va = p->resident_pages[idx];
+
+    acquire(&swap_stats_lock);
+    swap_stats.scan_inspections++;
+    release(&swap_stats_lock);
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || !(*pte & PTE_V)) {
+      victim_idx = idx;
+      break;
+    }
+
+    uint8 accessed = (*pte & PTE_A) ? 1 : 0;
+    p->access_history[idx] = (p->access_history[idx] >> 1) | (accessed << 7);
+    *pte &= ~PTE_A;
+    sfence_vma();
+
+    uint32 score = (uint32)p->access_history[idx] + ((*pte & PTE_D) ? dynamic_bias : 0);
+    if (score < min_score) {
+      min_score = score;
+      victim_idx = idx;
+    }
+  }
+
+  if (victim_idx < 0)
+    victim_idx = p->clock_hand % p->resident_count;
+
+  uint64 victim_va = p->resident_pages[victim_idx];
+  p->clock_hand = (victim_idx + 1) % p->resident_count;
+  fifo_remove(p, victim_va);
+  return victim_va;
+
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_FREQ_AGING
   if (p->resident_count <= 0)
     return 0;
 

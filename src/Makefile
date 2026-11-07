@@ -64,7 +64,7 @@ OBJDUMP = $(TOOLPREFIX)objdump
 # Deterministic builds.
 DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
 
-# Swapping replacement policy: FIFO, CLOCK, ENHANCED_CLOCK, ADAPTIVE_CLOCK, CAR_2Q, FREQ_AGING (default: ADAPTIVE_CLOCK)
+# Swapping replacement policy: FIFO, CLOCK, ENHANCED_CLOCK, ADAPTIVE_CLOCK, CAR_2Q, FREQ_AGING, DYNAMIC_BIAS (default: ADAPTIVE_CLOCK)
 POLICY ?= ADAPTIVE_CLOCK
 CFLAGS += -DPOLICY_$(POLICY)
 
