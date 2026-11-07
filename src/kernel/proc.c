@@ -146,6 +146,11 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->fifo_head = 0;
+  p->fifo_count = 0;
+  for (int i = 0; i < MAX_PHY_PAGES; i++)
+    p->fifo_pages[i] = 0;
+
   return p;
 }
 
@@ -168,6 +173,10 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->fifo_head = 0;
+  p->fifo_count = 0;
+  for (int i = 0; i < MAX_PHY_PAGES; i++)
+    p->fifo_pages[i] = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -267,13 +276,22 @@ kfork(void)
     return -1;
   }
 
+  release(&np->lock);
+
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
   }
   np->sz = p->sz;
+
+  // Copy FIFO queue state from parent to child
+  np->fifo_head = p->fifo_head;
+  np->fifo_count = p->fifo_count;
+  for (i = 0; i < MAX_PHY_PAGES; i++)
+    np->fifo_pages[i] = p->fifo_pages[i];
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -290,8 +308,6 @@ kfork(void)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
-
-  release(&np->lock);
 
   acquire(&wait_lock);
   np->parent = p;
