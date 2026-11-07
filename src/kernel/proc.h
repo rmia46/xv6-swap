@@ -100,6 +100,7 @@ struct proc {
   struct context context;      // swtch() here to run process
   // Resident user virtual pages for replacement policy
   uint64 resident_pages[MAX_PHY_PAGES];
+  uint8 access_history[MAX_PHY_PAGES]; // Reference history shift registers
   int clock_hand;     // Clock hand / FIFO head index
   int resident_count; // Number of resident physical pages
 
