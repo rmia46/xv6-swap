@@ -193,7 +193,9 @@ Tracking structures are embedded directly in `struct proc` in [src/kernel/proc.h
 struct proc {
   ...
   uint64 resident_pages[MAX_PHY_PAGES]; // Virtual addresses of mapped user pages
-  uint8  access_history[MAX_PHY_PAGES]; // Reference history shift registers (Adaptive Clock)
+  uint8  access_history[MAX_PHY_PAGES]; // 8-bit recency shift register / multi-touch counter
+  uint8  ref_frequency[MAX_PHY_PAGES];  // 4-bit saturating frequency counter (0..15, FREQ_AGING)
+  uint8  is_protected[MAX_PHY_PAGES];   // Partition tag: 0 = Probationary T1, 1 = Protected T2 (CAR_2Q)
   int    clock_hand;                    // Scanning hand / FIFO head index
   int    resident_count;                // Number of currently resident physical pages (0..16)
   ...
@@ -211,26 +213,28 @@ The replacement engine separates the **mechanism** (I/O transfer, bitmap allocat
 
 Compile-time selection is controlled via `src/Makefile`:
 ```make
-# Options: FIFO, CLOCK, ENHANCED_CLOCK, ADAPTIVE_CLOCK
+# Options: FIFO, CLOCK, ENHANCED_CLOCK, ADAPTIVE_CLOCK, CAR_2Q, FREQ_AGING, DYNAMIC_BIAS, TIMER_AGING
 POLICY ?= ADAPTIVE_CLOCK
 ```
 
 ```
-           +---------------------------------------------+
-           |           swap_evict_page(proc)             |
-           +----------------------+----------------------+
-                                  |
-                                  v
-           +---------------------------------------------+
-           |             select_victim_page()            |
-           +---------------------------------------------+
-                     |             |              |
-     +---------------+      +------+------+       +---------------+
-     |                      |             |                       |
-     v                      v             v                       v
-[FIFO Policy]        [Clock Policy] [Enhanced Clock]     [Adaptive Clock]
-Queue Head Eviction  1-bit Second   4-Class (A, D)       8-bit Shift Reg
-(Order of Arrival)   Chance Sweep   Multi-pass Search    Recency + Dirty
+                                  +---------------------------------------------+
+                                  |           swap_evict_page(proc)             |
+                                  +----------------------+----------------------+
+                                                         |
+                                                         v
+                                  +---------------------------------------------+
+                                  |             select_victim_page()            |
+                                  +----------------------+----------------------+
+                                                         |
+       +-------------------------------------------------+-------------------------------------------------+
+       |                                                                                                   |
+       v                                                                                                   v
+[Phase I Baselines]                                                                               [Phase II Research Candidates]
+  ├── Policy 0: FIFO (Circular arrival queue)                                                       ├── Policy 4: CAR_2Q (Probationary T1 + Protected T2)
+  ├── Policy 1: CLOCK (1-bit second chance sweep)                                                   ├── Policy 5: FREQ_AGING (4-bit saturating LFU + 8-bit recency)
+  ├── Policy 2: ENHANCED_CLOCK (4-Class Accessed + Dirty)                                           ├── Policy 6: DYNAMIC_BIAS (Sliding window fault velocity tracker)
+  └── Policy 3: ADAPTIVE_CLOCK (8-bit decaying shift register + static dirty bias)                  └── Policy 7: TIMER_AGING (Timer-driven background decay + fast path)
 ```
 
 ---
@@ -294,6 +298,117 @@ Queue Head Eviction  1-bit Second   4-Class (A, D)       8-bit Shift Reg
   - The $+32$ bias protects dirty frames against clean frames of comparable recency, saving swap disk writes.
   - Advance `clock_hand = (victim_idx + 1) % resident_count`.
 - **Complexity:** Exactly $N = 16$ inspections per eviction. Deterministic, loop-free, and cache-friendly.
+
+---
+
+### Policy 4: CAR_2Q (Dual-List Scan-Resistant Clock Policy)
+- **Concept:** Inspired by the 2Q and Clock with Adaptive Replacement (CAR) algorithms. Solves the classical cache scan vulnerability where streaming sequential loops flush active, frequently referenced working sets. Partitions the 16 resident frames into a probationary list $T_1$ (absorbs single-touch transient bursts) and a protected list $T_2$ (shields multi-touch hot pages).
+- **Data Structures (`struct proc`):**
+  - `uint8 is_protected[MAX_PHY_PAGES]`: List membership tag (`0 = T1 Probationary`, `1 = T2 Protected`).
+  - `uint8 access_history[MAX_PHY_PAGES]`: Multi-touch frequency counter tracking re-references in $T_1$.
+  - Capacity target: `#define CAR_T2_TARGET 12` (allocates up to $75\%$ of resident memory to hot working set pages, leaving at least 4 frames in $T_1$ for transient traffic).
+- **Eviction & Promotion / Demotion Pipeline:**
+  1. **$T_1$ Probationary Sweep (Primary Search):**
+     - If $|T_1| > 0$ and $|T_2| < \text{CAR\_T2\_TARGET}$, scan candidates in $T_1$ starting at `clock_hand`.
+     - For each examined candidate:
+       - If `PTE_A == 1`: Clear `PTE_A`, issue `sfence_vma()`.
+         - If `PTE_D == 1` (Dirty): Immediately promote to $T_2$ (`is_protected = 1`, $|T_2|++$). Rationale: Dirty writebacks are expensive; protecting referenced dirty frames avoids immediate disk write traffic.
+         - If `PTE_D == 0` (Clean): Increment `access_history`. If $\ge 2$, promote to $T_2$ (`is_protected = 1`, $|T_2|++$). Otherwise retain in $T_1$ as an eviction candidate.
+         - If $|T_2|$ reaches capacity ($\ge 12$) or $T_1$ empties, break to Step 2.
+       - If `PTE_A == 0`: Found candidate in $T_1$. Clean frames (`PTE_D == 0`) are evicted immediately. Dirty frames are recorded as fallback candidates if no clean frames appear within 16 iterations.
+  2. **$T_2$ Protected Demotion Sweep (Secondary Search):**
+     - If no victim was found in $T_1$ or $|T_2| \ge \text{CAR\_T2\_TARGET}$, sweep $T_2$.
+     - For each examined candidate:
+       - If `PTE_A == 1`: Grant second chance (`PTE_A = 0`, `sfence_vma()`).
+       - If `PTE_A == 0`: Demote candidate from $T_2$ to $T_1$ (`is_protected = 0`, $|T_2|--$). Clean demoted frames are evicted immediately; dirty demoted frames are recorded as fallback.
+  3. **Guaranteed Bounded Fallback:**
+     - Sweep is bounded by $2N + 1$ iterations, guaranteeing deterministic eviction without infinite loops.
+- **Complexity & Scan Overhead:**
+  - While theoretical worst-case is $O(N)$, dual-list partitioning filters candidates rapidly.
+  - Across the entire benchmark suite, `CAR_2Q` completed with **4,335 scan inspections**—a **42.8% reduction in kernel scan overhead** compared to `ADAPTIVE_CLOCK` (7,584 scans).
+- **Empirical Leadership:** Achieved the absolute lowest fault count across all 8 evaluated policies: **467 total faults** and **934 swap I/O pages**.
+
+---
+
+### Policy 5: FREQ_AGING (Frequency-Weighted Access Aging / LFU-Recency Blend)
+- **Concept:** Blends temporal recency with cumulative reference frequency. Pure LFU suffers from cache pollution by historical frequency bursts that become obsolete; pure LRU cannot differentiate between a page accessed twice and a page accessed 1,000 times within a loop. `FREQ_AGING` pairs an 8-bit recency shift register with an exponentially decaying 4-bit saturating frequency counter.
+- **Data Structures (`struct proc`):**
+  - `uint8 access_history[MAX_PHY_PAGES]`: 8-bit recency shift register. Initialized to `0x80` on enqueue.
+  - `uint8 ref_frequency[MAX_PHY_PAGES]`: 4-bit saturating counter ($0 \dots 15$). Initialized to `1` on enqueue.
+- **Aging and Decay Dynamics:**
+  On eviction demand, sweeps all resident frames $i \in [0, resident\_count - 1]$ from `clock_hand`:
+  - **Referenced (`PTE_A == 1`):**
+    - Frequency increment: $\text{ref\_frequency}[i] = \min(15, \text{ref\_frequency}[i] + 1)$
+    - Recency shift: $\text{access\_history}[i] = (\text{access\_history}[i] \gg 1) \mid 0x80$
+    - Clear `PTE_A` and issue `sfence_vma()`.
+  - **Unreferenced (`PTE_A == 0`):**
+    - Exponential frequency decay: $\text{ref\_frequency}[i] = \lfloor (\text{ref\_frequency}[i] \times 3) / 4 \rfloor$
+    - Recency shift: $\text{access\_history}[i] = \text{access\_history}[i] \gg 1$
+- **Composite Scoring Function:**
+  $$\text{Score}_i = \text{access\_history}[i] + (\text{ref\_frequency}[i] \times 16) + ((\text{PTE\_D}_i) \mathrel{?} 32 : 0)$$
+  - Multiplier $\times 16$ weights frequency into the upper nibble while recency informs the lower range.
+  - Dirty penalty $+32$ disfavors expensive disk writebacks.
+  - Page with the minimum $\text{Score}_i$ is evicted; tie-breaking follows clock hand traversal order.
+- **Complexity:** Deterministic single-pass $O(N)$ with exactly $N = 16$ candidate inspections per eviction.
+- **Empirical Findings:** Matches `ADAPTIVE_CLOCK` at **474 total faults** and **948 swap I/O pages**, validating that exponential frequency decay prevents stale frequency traps.
+
+---
+
+### Policy 6: DYNAMIC_BIAS (Sliding Window Fault Velocity Sensitive Dirty Writeback Bias)
+- **Concept:** Static dirty writeback penalties (such as $+32$) fail to respond to dynamic system conditions. Under heavy memory pressure and high fault velocity $\frac{\Delta F}{\Delta t}$, writing dirty pages to disk saturates storage bandwidth and blocks user processes; during low fault velocity, excessive dirty penalties artificially strand cold dirty pages. `DYNAMIC_BIAS` tracks instantaneous fault velocity across a sliding timer window and modulates dirty eviction penalties dynamically.
+- **Data Structures & Concurrency Model (`src/kernel/swap.c`):**
+  - `#define FAULT_WINDOW_TICKS 4`: Sliding window duration (4 timer ticks $\approx 400$ ms).
+  - `#define BASE_BIAS 24`: Baseline penalty under calm memory conditions.
+  - `#define RATE_FACTOR 4`: Sensitivity scaling factor.
+  - `#define MIN_BIAS 16` and `#define MAX_BIAS 64`: Strict clamping boundaries.
+  - Circular window buffer: `static uint32 fault_history[FAULT_WINDOW_TICKS];`
+  - Window cursor: `static uint last_window_tick;`
+  - **Deadlock-Free Synchronization:** To prevent lock inversion between `tickslock` and `swap_stats_lock`, `ticks` is read independently under `tickslock`. All window slot rotations and aggregations are protected strictly under `swap_stats_lock`.
+- **Velocity Tracking Pipeline (`swap_record_fault`):**
+  - Intercepted on every page fault in `vmfault()`.
+  - If current tick has advanced beyond `last_window_tick`, stale intermediate slots are zeroed out and `last_window_tick` is advanced.
+  - Current slot counter is atomically incremented: `fault_history[cur_tick % 4]++`.
+- **Dynamic Bias Computation:**
+  $$\text{total\_faults} = \sum_{k=0}^{\text{FAULT\_WINDOW\_TICKS}-1} \text{fault\_history}[k]$$
+  $$\text{dynamic\_bias} = \text{clamp}\left(\text{BASE\_BIAS} + \frac{\text{total\_faults} \times \text{RATE\_FACTOR}}{\text{FAULT\_WINDOW\_TICKS}}, \text{MIN\_BIAS}, \text{MAX\_BIAS}\right)$$
+- **Candidate Scoring:**
+  $$\text{Score}_i = \text{access\_history}[i] + ((\text{PTE\_D}_i) \mathrel{?} \text{dynamic\_bias} : 0)$$
+- **Empirical Leadership:** In write-intensive workloads (`dirty_stress`), dynamic bias escalated to $+64$, lifting the clean eviction ratio to **64.3%** and reducing dirty page writebacks from 56 down to **50**. Across the entire suite, `DYNAMIC_BIAS` produced **139 clean evictions**, leading write amplification suppression.
+
+---
+
+### Policy 7: TIMER_AGING (Timer-Interrupt Driven Background Decay & Fast Path)
+- **Concept:** In all prior aging policies, recency evaluation and TLB shootdowns occur synchronously on the critical path of page allocation inside the page fault handler. This incurs double penalties: high fault handling latency and lack of recency decay during long compute-heavy execution bursts between faults. `TIMER_AGING` decouples reference bit decay into periodic timer interrupt handlers (`devintr()`), providing continuous real-time decay and an ultra-fast eviction path.
+- **Architectural Components:**
+  1. **Timer Interrupt Hook (`src/kernel/trap.c`):**
+     - Hooked into `devintr()` on timer interrupts (`scause == 0x8000000000000005L`).
+     - Decoupled from core hardware CPU IDs (`cpuid()`), preserving continuous timer decay across multi-core process migrations (`yield()` on `-smp 3`).
+  2. **Non-Blocking Background Decay Engine (`swap_timer_age_tick`):**
+     - Traverses resident user pages without acquiring spinlocks or sleeplocks (zero interrupt latency, zero deadlock risk).
+     - Samples hardware `PTE_A`, shifts `access_history[i] = (access_history[i] >> 1) | (accessed << 7)`.
+     - **Batched TLB Invalidation:** Instead of issuing `sfence_vma()` after every individual page, batches invalidation: executes a single `sfence_vma()` at the conclusion of the resident loop only if one or more `PTE_A` bits were cleared.
+  3. **Eviction Fast-Path & Anti-FIFO Differentiation Sweep (`select_victim_page`):**
+     - Evaluates pre-computed scores: $\text{Score}_i = \text{access\_history}[i] + ((\text{PTE\_D}_i) \mathrel{?} 32 : 0)$.
+     - Early exit on $\text{Score} == 0$.
+     - **Anti-FIFO Differentiation Sweep:** If user-mode access bursts outpace 100 ms timer intervals, resident frames could hold identical un-aged scores (`min_score == max_score`). The eviction engine detects this condition and immediately executes an on-demand differentiation sweep over `PTE_A`, preventing collapse into circular FIFO.
+- **Empirical Leadership:**
+  - Absolute execution cycle leader: Completed all 5 workloads in **11.61 billion CPU cycles**, achieving a **-13.3% cycle time reduction** compared to `ADAPTIVE_CLOCK` (13.40B cycles) and **-15.6%** compared to `CAR_2Q` (13.76B cycles).
+  - Recorded fastest individual workload execution times across the entire project: `matrix` (260M cycles), `dirty_stress` (3.16B cycles), and `phase_change` (1.28B cycles).
+
+---
+
+### 6.9 Architectural Comparison Matrix across All 8 Policies
+
+| Policy | Family | Per-Frame State Overhead | Eviction Complexity | Scan Cost per Evict | Clean Eviction Preference | TLB Flush Pattern | Dominant Strength / Pareto Dimension |
+|---|---|---|---|---|---|---|---|
+| **FIFO** | Arrival Queue | 0 bits (order in array) | $O(1)$ | 1.0 frames | None (blind) | None during selection | Minimal kernel logic; baseline control |
+| **CLOCK** | Second-Chance | 0 bits (hardware `PTE_A`) | $O(N)$ (max $2N$) | 2.1–2.6 frames | None | Per-frame on `PTE_A` clear | Low overhead second-chance tracking |
+| **ENHANCED_CLOCK** | 4-Class Matrix | 0 bits (hardware `A, D`) | $O(4N)$ multi-pass | 11.3–19.7 frames | Highest (strict Class 0/1) | Per-frame on odd passes | 100% clean-first victim prioritization |
+| **ADAPTIVE_CLOCK** | Recency Aging | 8 bits (`access_history`) | $O(N)$ single-pass | 16.0 frames | Static score bias ($+32$) | Per-frame on `PTE_A` clear | Multi-epoch recency tracking |
+| **CAR_2Q** | Dual-List Adaptive | 9 bits (`is_protected` + hist) | $O(N)$ bounded | 7.6–11.1 frames | Promotes dirty to $T_2$ | Per-frame on `PTE_A` clear | **Fault Minimization Leader (467 faults)** |
+| **FREQ_AGING** | LFU-Recency Blend | 12 bits (8b hist + 4b freq) | $O(N)$ single-pass | 16.0 frames | Static score bias ($+32$) | Per-frame on `PTE_A` clear | Long-term frequency vs short-term recency |
+| **DYNAMIC_BIAS** | Congestion-Aware | 8 bits + sliding window | $O(N)$ single-pass | 16.0 frames | Dynamic velocity bias ($16..64$) | Per-frame on `PTE_A` clear | **Write Amplification Suppression (64.3% clean)** |
+| **TIMER_AGING** | Real-Time Async | 8 bits (`access_history`) | $O(N)$ fast-path | 16.0 frames | Static score bias ($+32$) | **Batched single `sfence_vma()`** | **Latency / Speedup Leader (11.61B cycles)** |
 
 ---
 
