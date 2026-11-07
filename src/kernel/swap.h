@@ -35,6 +35,7 @@ struct proc;
 // Policy hook: evict one resident page for process p
 // Returns 0 on success, -1 on failure
 int swap_evict_page(struct proc *p);
+void swap_timer_age_tick(struct proc *p);
 
 // Page replacement policy definitions
 #define SWAP_POLICY_FIFO           0
@@ -44,8 +45,11 @@ int swap_evict_page(struct proc *p);
 #define SWAP_POLICY_CAR_2Q         4
 #define SWAP_POLICY_FREQ_AGING     5
 #define SWAP_POLICY_DYNAMIC_BIAS   6
+#define SWAP_POLICY_TIMER_AGING    7
 
-#if defined(POLICY_DYNAMIC_BIAS)
+#if defined(POLICY_TIMER_AGING)
+#define CURRENT_SWAP_POLICY SWAP_POLICY_TIMER_AGING
+#elif defined(POLICY_DYNAMIC_BIAS)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_DYNAMIC_BIAS
 #elif defined(POLICY_FREQ_AGING)
 #define CURRENT_SWAP_POLICY SWAP_POLICY_FREQ_AGING
