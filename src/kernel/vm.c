@@ -7,6 +7,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "fs.h"
+#include "swap.h"
 
 /*
  * the kernel's page table.
@@ -195,15 +196,25 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
+  struct proc *p = myproc();
 
   if ((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
+    if (p && p->pagetable == pagetable) {
+      fifo_remove(p, a);
+    }
     if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
       continue;
-    if ((*pte & PTE_V) == 0) // has physical page been allocated?
+    if (!(*pte & PTE_V)) {
+      if (*pte & PTE_S) {
+        int slot = PTE2SWAPSLOT(*pte);
+        swap_free(slot);
+        *pte = 0;
+      }
       continue;
+    }
     if (do_free) {
       uint64 pa = PTE2PA(*pte);
       kfree((void *)pa);
@@ -219,12 +230,19 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
   char *mem;
   uint64 a;
+  struct proc *p = myproc();
 
   if (newsz < oldsz)
     return oldsz;
 
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += PGSIZE) {
+    if (p && p->pagetable == pagetable && p->fifo_count >= MAX_PHY_PAGES) {
+      if (swap_evict_page(p) < 0) {
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+    }
     mem = kalloc();
     if (mem == 0) {
       uvmdealloc(pagetable, a, oldsz);
@@ -236,6 +254,9 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
+    }
+    if (p && p->pagetable == pagetable) {
+      fifo_enqueue(p, a);
     }
   }
   return newsz;
@@ -306,8 +327,40 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
       continue; // page table entry hasn't been allocated
-    if ((*pte & PTE_V) == 0)
-      continue; // physical page hasn't been allocated
+    if (!(*pte & PTE_V)) {
+      if (*pte & PTE_S) {
+        // Parent page is swapped out.
+        // Swap it into a temporary buffer to allocate a new swap slot for child.
+        int old_slot = PTE2SWAPSLOT(*pte);
+        char *tmp = kalloc();
+        if (tmp == 0)
+          goto err;
+        if (swap_read(old_slot, tmp) < 0) {
+          kfree(tmp);
+          goto err;
+        }
+        int new_slot = swap_alloc();
+        if (new_slot < 0) {
+          kfree(tmp);
+          goto err;
+        }
+        if (swap_write(new_slot, tmp) < 0) {
+          swap_free(new_slot);
+          kfree(tmp);
+          goto err;
+        }
+        kfree(tmp);
+
+        // Map child PTE pointing to the new swap slot
+        pte_t *new_pte = walk(new, i, 1);
+        if (new_pte == 0) {
+          swap_free(new_slot);
+          goto err;
+        }
+        *new_pte = ENCODE_SWAP_PTE(new_slot, PTE_FLAGS(*pte));
+      }
+      continue;
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if ((mem = kalloc()) == 0)
@@ -451,21 +504,108 @@ copyinstr(pagetable_t pagetable, uint64 psz, char *dst, uint64 srcva,
   }
 }
 
+void
+fifo_enqueue(struct proc *p, uint64 va)
+{
+  if (p->fifo_count < MAX_PHY_PAGES) {
+    int tail = (p->fifo_head + p->fifo_count) % MAX_PHY_PAGES;
+    p->fifo_pages[tail] = va;
+    p->fifo_count++;
+  }
+}
+
+void
+fifo_remove(struct proc *p, uint64 va)
+{
+  int idx = -1;
+  for (int i = 0; i < p->fifo_count; i++) {
+    int slot = (p->fifo_head + i) % MAX_PHY_PAGES;
+    if (p->fifo_pages[slot] == va) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx != -1) {
+    for (int i = idx; i < p->fifo_count - 1; i++) {
+      int curr = (p->fifo_head + i) % MAX_PHY_PAGES;
+      int next = (p->fifo_head + i + 1) % MAX_PHY_PAGES;
+      p->fifo_pages[curr] = p->fifo_pages[next];
+    }
+    p->fifo_count--;
+  }
+}
+
 // allocate and map user memory if process is referencing a page
-// that was lazily allocated in sys_sbrk().
+// that was lazily allocated in sys_sbrk() or swapped out.
 // returns 0 if va is invalid or already mapped, or if
 // out of physical memory, and physical address if successful.
 uint64
 vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
 {
   uint64 mem;
+  struct proc *p = myproc();
 
   if (va >= psz)
     return 0;
   va = PGROUNDDOWN(va);
+
+  acquire(&swap_stats_lock);
+  swap_stats.fault_total++;
+  release(&swap_stats_lock);
+
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte && !(*pte & PTE_V) && (*pte & PTE_S)) {
+    // This is a SWAP-IN fault!
+    acquire(&swap_stats_lock);
+    swap_stats.fault_swapin++;
+    release(&swap_stats_lock);
+
+    int slot = PTE2SWAPSLOT(*pte);
+    uint64 orig_flags = PTE_FLAGS(*pte);
+
+    // Evict a page if resident pages reached MAX_PHY_PAGES
+    if (p && p->pagetable == pagetable && p->fifo_count >= MAX_PHY_PAGES) {
+      if (swap_evict_page(p) < 0) {
+        return 0;
+      }
+    }
+
+    mem = (uint64)kalloc();
+    if (mem == 0)
+      return 0;
+
+    if (swap_read(slot, (char *)mem) < 0) {
+      kfree((void *)mem);
+      return 0;
+    }
+    swap_free(slot);
+
+    // Restore PTE: clear PTE_S, set PTE_V, preserve user permissions
+    uint64 perm = (orig_flags & (PTE_R | PTE_W | PTE_X | PTE_U));
+    *pte = PA2PTE(mem) | perm | PTE_V;
+    sfence_vma();
+
+    if (p && p->pagetable == pagetable) {
+      fifo_enqueue(p, va);
+    }
+    return mem;
+  }
+
   if (ismapped(pagetable, va)) {
     return 0;
   }
+
+  // Lazy allocation page fault
+  acquire(&swap_stats_lock);
+  swap_stats.fault_lazy++;
+  release(&swap_stats_lock);
+
+  if (p && p->pagetable == pagetable && p->fifo_count >= MAX_PHY_PAGES) {
+    if (swap_evict_page(p) < 0) {
+      return 0;
+    }
+  }
+
   mem = (uint64)kalloc();
   if (mem == 0)
     return 0;
@@ -473,6 +613,10 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
   if (mappages(pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
+  }
+
+  if (p && p->pagetable == pagetable) {
+    fifo_enqueue(p, va);
   }
   return mem;
 }

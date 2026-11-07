@@ -397,6 +397,10 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_G (1L << 5) // global
+#define PTE_A (1L << 6) // accessed
+#define PTE_D (1L << 7) // dirty
+#define PTE_S (1L << 8) // swapped to disk (software bit in RSW)
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
@@ -404,6 +408,11 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE2PA(pte) (((pte) >> 10) << 12)
 
 #define PTE_FLAGS(pte) ((pte) & 0x3FF)
+
+// Macros to pack and unpack swap slot into PTE bits 10..31 when !(pte & PTE_V) and (pte & PTE_S)
+#define SWAP_SLOT_MASK   0x3FFFFF // 22 bits
+#define ENCODE_SWAP_PTE(slot, flags) ((((uint64)(slot) & SWAP_SLOT_MASK) << 10) | ((flags) & 0x3FF) | PTE_S)
+#define PTE2SWAPSLOT(pte) (((pte) >> 10) & SWAP_SLOT_MASK)
 
 // extract the three 9-bit page table indices from a virtual address.
 #define PXMASK         0x1FF // 9 bits

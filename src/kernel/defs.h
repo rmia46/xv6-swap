@@ -170,6 +170,16 @@ int             copyin(pagetable_t, uint64, char *, uint64, uint64);
 int             copyinstr(pagetable_t, uint64, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, uint64, int);
+void            fifo_enqueue(struct proc *, uint64);
+void            fifo_remove(struct proc *, uint64);
+
+// swap.c
+void            swap_init(void);
+int             swap_alloc(void);
+void            swap_free(int);
+int             swap_write(int, char *);
+int             swap_read(int, char *);
+int             swap_evict_page(struct proc *);
 
 // plic.c
 void            plicinit(void);

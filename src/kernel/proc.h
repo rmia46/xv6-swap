@@ -98,6 +98,16 @@ struct proc {
   pagetable_t pagetable;       // User page table
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
+  // Resident user virtual pages for replacement policy
+  uint64 resident_pages[MAX_PHY_PAGES];
+  int clock_hand;     // Clock hand / FIFO head index
+  int resident_count; // Number of resident physical pages
+
+  // Backwards compatibility aliases
+  #define fifo_pages resident_pages
+  #define fifo_head clock_hand
+  #define fifo_count resident_count
+
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)

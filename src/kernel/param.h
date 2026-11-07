@@ -12,3 +12,8 @@
 #define FSSIZE      2000              // size of file system in blocks
 #define MAXPATH     128               // maximum file path name
 #define USERSTACK   1                 // user stack pages
+
+// Swapping definitions
+#define SWAPSTART   FSSIZE            // first block of swap area (e.g. 2000)
+#define SWAPBLOCKS  8000              // total blocks reserved for swap (2000 pages, 4 blocks/page)
+#define MAX_PHY_PAGES 16              // max resident physical pages per user process

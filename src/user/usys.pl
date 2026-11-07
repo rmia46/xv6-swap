@@ -43,3 +43,5 @@ entry("sbrk");
 entry("pause");
 entry("uptime");
 entry("sync");
+entry("get_swap_stats");
+entry("reset_swap_stats");

@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "swap.h"
 #include "vm.h"
 
 uint64
@@ -109,4 +110,24 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_get_swap_stats(void)
+{
+  uint64 addr;
+  struct swap_stats st;
+
+  argaddr(0, &addr);
+  swap_stats_get(&st);
+  if (copyout(myproc()->pagetable, myproc()->sz, addr, (char *)&st, sizeof(st)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64
+sys_reset_swap_stats(void)
+{
+  swap_stats_reset();
+  return 0;
 }
