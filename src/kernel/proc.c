@@ -148,8 +148,10 @@ found:
 
   p->fifo_head = 0;
   p->fifo_count = 0;
-  for (int i = 0; i < MAX_PHY_PAGES; i++)
+  for (int i = 0; i < MAX_PHY_PAGES; i++) {
     p->fifo_pages[i] = 0;
+    p->access_history[i] = 0;
+  }
 
   return p;
 }
@@ -175,8 +177,10 @@ freeproc(struct proc *p)
   p->state = UNUSED;
   p->fifo_head = 0;
   p->fifo_count = 0;
-  for (int i = 0; i < MAX_PHY_PAGES; i++)
+  for (int i = 0; i < MAX_PHY_PAGES; i++) {
     p->fifo_pages[i] = 0;
+    p->access_history[i] = 0;
+  }
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -290,8 +294,10 @@ kfork(void)
   // Copy FIFO queue state from parent to child
   np->fifo_head = p->fifo_head;
   np->fifo_count = p->fifo_count;
-  for (i = 0; i < MAX_PHY_PAGES; i++)
+  for (i = 0; i < MAX_PHY_PAGES; i++) {
     np->fifo_pages[i] = p->fifo_pages[i];
+    np->access_history[i] = p->access_history[i];
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

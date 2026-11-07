@@ -137,8 +137,10 @@ kexec(char *path, char **argv)
   p->trapframe->sp = sp;         // initial stack pointer
   p->fifo_head = 0;
   p->fifo_count = 0;
-  for (int j = 0; j < MAX_PHY_PAGES; j++)
+  for (int j = 0; j < MAX_PHY_PAGES; j++) {
     p->fifo_pages[j] = 0;
+    p->access_history[j] = 0;
+  }
   proc_freepagetable(oldpagetable, oldsz);
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
