@@ -175,6 +175,7 @@ void            fifo_remove(struct proc *, uint64);
 
 // swap.c
 void            swap_init(void);
+void            swap_record_fault(void);
 int             swap_alloc(void);
 void            swap_free(int);
 int             swap_write(int, char *);

@@ -514,7 +514,7 @@ fifo_enqueue(struct proc *p, uint64 va)
 #if CURRENT_SWAP_POLICY == SWAP_POLICY_FREQ_AGING
     p->access_history[tail] = 0x80;
     p->ref_frequency[tail] = 1;
-#elif CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK
+#elif CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK || CURRENT_SWAP_POLICY == SWAP_POLICY_DYNAMIC_BIAS
     p->access_history[tail] = 0x80;
     p->ref_frequency[tail] = 0;
 #else
@@ -568,9 +568,7 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
     return 0;
   va = PGROUNDDOWN(va);
 
-  acquire(&swap_stats_lock);
-  swap_stats.fault_total++;
-  release(&swap_stats_lock);
+  swap_record_fault();
 
   pte_t *pte = walk(pagetable, va, 0);
   if (pte && !(*pte & PTE_V) && (*pte & PTE_S)) {
