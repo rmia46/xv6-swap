@@ -26,7 +26,7 @@ SRC_DIR = os.path.join(REPO_ROOT, "src")
 RAW_DIR = os.path.join(REPO_ROOT, "benchmarks", "raw")
 PROCESSED_DIR = os.path.join(REPO_ROOT, "benchmarks", "processed")
 
-POLICIES = ["FIFO", "CLOCK", "ENHANCED_CLOCK", "ADAPTIVE_CLOCK"]
+POLICIES = ["FIFO", "CLOCK", "ENHANCED_CLOCK", "ADAPTIVE_CLOCK", "CAR_2Q"]
 WORKLOADS = ["sequential", "locality", "matrix", "dirty_stress", "phase_change"]
 NUM_TRIALS = 3
 
@@ -166,14 +166,18 @@ def main():
     ensure_directories()
     results = {}
 
+    target_policies = [p for p in sys.argv[1:] if p in POLICIES]
+    if not target_policies:
+        target_policies = POLICIES
+
     print("================================================================")
     print("       xv6 Paging & Swapping Subsystem Benchmark Suite          ")
-    print(f" Policies:  {', '.join(POLICIES)}")
+    print(f" Policies:  {', '.join(target_policies)}")
     print(f" Workloads: {', '.join(WORKLOADS)}")
     print(f" Trials:    {NUM_TRIALS} per configuration")
     print("================================================================\n")
 
-    for policy in POLICIES:
+    for policy in target_policies:
         build_xv6(policy)
         results[policy] = {}
 
@@ -215,8 +219,35 @@ def main():
                 f" Done. (faults={median_stats['faults']}, reads={median_stats['reads']}, writes={median_stats['writes']}, scans={median_stats['scan_inspections']})"
             )
 
-    # 1. Output CSV Table
+    # 1. Output CSV Table (merge with existing results if available)
     csv_path = os.path.join(PROCESSED_DIR, "results.csv")
+    all_results = {}
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, "r") as f:
+                lines = [line.strip().split(",") for line in f if line.strip()]
+            if lines and lines[0][0] == "policy":
+                for row in lines[1:]:
+                    pol, wl = row[0], row[1]
+                    if pol not in all_results:
+                        all_results[pol] = {}
+                    all_results[pol][wl] = {
+                        "ticks": int(row[2]),
+                        "cycles": int(row[3]),
+                        "faults": int(row[4]),
+                        "swapin": int(row[5]),
+                        "reads": int(row[6]),
+                        "writes": int(row[7]),
+                        "evict_clean": int(row[8]),
+                        "evict_dirty": int(row[9]),
+                        "scan_inspections": int(row[10]),
+                    }
+        except Exception:
+            pass
+
+    for pol in results:
+        all_results[pol] = results[pol]
+
     print(f"\n[*] Generating CSV at {csv_path}...")
     headers = [
         "policy",
@@ -235,11 +266,15 @@ def main():
         "avg_scan_len",
     ]
 
+    active_policies = [p for p in POLICIES if p in all_results]
+
     with open(csv_path, "w") as f:
         f.write(",".join(headers) + "\n")
-        for policy in POLICIES:
+        for policy in active_policies:
             for workload in WORKLOADS:
-                m = results[policy][workload]
+                if workload not in all_results[policy]:
+                    continue
+                m = all_results[policy][workload]
                 evict_total = m["evict_clean"] + m["evict_dirty"]
                 clean_ratio = (m["evict_clean"] / evict_total) if evict_total > 0 else 0.0
                 writes_per_evict = (m["writes"] / evict_total) if evict_total > 0 else 0.0
@@ -280,8 +315,10 @@ def main():
             f.write(
                 "|---|---|---|---|---|---|---|---|---|---|\n"
             )
-            for policy in POLICIES:
-                m = results[policy][workload]
+            for policy in active_policies:
+                if workload not in all_results[policy]:
+                    continue
+                m = all_results[policy][workload]
                 evict_total = m["evict_clean"] + m["evict_dirty"]
                 clean_ratio = (m["evict_clean"] / evict_total * 100.0) if evict_total > 0 else 0.0
                 f.write(
@@ -295,13 +332,15 @@ def main():
             "| Policy | Total Faults | Total Disk Reads | Total Disk Writes | Total Swap I/O Pages | Total Clean Evicts | Total Scans |\n"
         )
         f.write("|---|---|---|---|---|---|---|\n")
-        for policy in POLICIES:
-            tot_faults = sum(results[policy][w]["faults"] for w in WORKLOADS)
-            tot_reads = sum(results[policy][w]["reads"] for w in WORKLOADS)
-            tot_writes = sum(results[policy][w]["writes"] for w in WORKLOADS)
+        for policy in active_policies:
+            if not all(w in all_results[policy] for w in WORKLOADS):
+                continue
+            tot_faults = sum(all_results[policy][w]["faults"] for w in WORKLOADS)
+            tot_reads = sum(all_results[policy][w]["reads"] for w in WORKLOADS)
+            tot_writes = sum(all_results[policy][w]["writes"] for w in WORKLOADS)
             tot_io = tot_reads + tot_writes
-            tot_clean = sum(results[policy][w]["evict_clean"] for w in WORKLOADS)
-            tot_scans = sum(results[policy][w]["scan_inspections"] for w in WORKLOADS)
+            tot_clean = sum(all_results[policy][w]["evict_clean"] for w in WORKLOADS)
+            tot_scans = sum(all_results[policy][w]["scan_inspections"] for w in WORKLOADS)
             f.write(
                 f"| **{policy}** | {tot_faults} | {tot_reads} | {tot_writes} | **{tot_io}** | {tot_clean} | {tot_scans} |\n"
             )

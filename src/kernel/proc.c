@@ -151,6 +151,7 @@ found:
   for (int i = 0; i < MAX_PHY_PAGES; i++) {
     p->fifo_pages[i] = 0;
     p->access_history[i] = 0;
+    p->is_protected[i] = 0;
   }
 
   return p;
@@ -180,6 +181,7 @@ freeproc(struct proc *p)
   for (int i = 0; i < MAX_PHY_PAGES; i++) {
     p->fifo_pages[i] = 0;
     p->access_history[i] = 0;
+    p->is_protected[i] = 0;
   }
 }
 
@@ -297,6 +299,7 @@ kfork(void)
   for (i = 0; i < MAX_PHY_PAGES; i++) {
     np->fifo_pages[i] = p->fifo_pages[i];
     np->access_history[i] = p->access_history[i];
+    np->is_protected[i] = p->is_protected[i];
   }
 
   // copy saved user registers.

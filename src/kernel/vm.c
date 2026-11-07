@@ -510,7 +510,12 @@ fifo_enqueue(struct proc *p, uint64 va)
   if (p->fifo_count < MAX_PHY_PAGES) {
     int tail = (p->fifo_head + p->fifo_count) % MAX_PHY_PAGES;
     p->fifo_pages[tail] = va;
+    p->is_protected[tail] = 0;
+#if CURRENT_SWAP_POLICY == SWAP_POLICY_ADAPTIVE_CLOCK
     p->access_history[tail] = 0x80;
+#else
+    p->access_history[tail] = 0;
+#endif
     p->fifo_count++;
   }
 }
@@ -532,10 +537,12 @@ fifo_remove(struct proc *p, uint64 va)
       int next = (p->fifo_head + i + 1) % MAX_PHY_PAGES;
       p->fifo_pages[curr] = p->fifo_pages[next];
       p->access_history[curr] = p->access_history[next];
+      p->is_protected[curr] = p->is_protected[next];
     }
     int last = (p->fifo_head + p->fifo_count - 1) % MAX_PHY_PAGES;
     p->fifo_pages[last] = 0;
     p->access_history[last] = 0;
+    p->is_protected[last] = 0;
     p->fifo_count--;
   }
 }
